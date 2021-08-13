@@ -1,3 +1,4 @@
+import eventOverrideCenter from './lib/event_override_center';
 import setupModeHandler from './lib/mode_handler';
 import getFeaturesAndSetCursor from './lib/get_features_and_set_cursor';
 import featuresAt from './lib/features_at';
@@ -7,6 +8,20 @@ import * as Constants from './constants';
 import objectToMode from './modes/object_to_mode';
 
 export default function(ctx) {
+
+  const isCrosshairEnabled = function(ctx) {
+    return ctx.options.crosshair
+      && ctx.options.crosshair.isEnabled();
+  }
+
+  const isCrosshairClick = function(ctx, event) {
+    return ctx.options.crosshair
+      && ctx.options.crosshair.isClick(event);
+  }
+
+  const getCrosshairCenter = function(ctx) {
+    return ctx.options.crosshair.getCenter();
+  }
 
   const modes = Object.keys(ctx.options.modes).reduce((m, k) => {
     m[k] = objectToMode(ctx.options.modes[k]);
@@ -44,12 +59,20 @@ export default function(ctx) {
     if (button === 1) {
       return events.mousedrag(event);
     }
+    if (isCrosshairEnabled(ctx)) {
+      return;
+    }
     const target = getFeaturesAndSetCursor(event, ctx);
     event.featureTarget = target;
     currentMode.mousemove(event);
   };
 
   events.mousedown = function(event) {
+    if (isCrosshairEnabled(ctx) && isCrosshairClick(ctx, event)) {
+      const center = getCrosshairCenter(ctx);
+      event = eventOverrideCenter(center, event);
+    }
+
     mouseDownInfo = {
       time: new Date().getTime(),
       point: event.point
@@ -59,7 +82,14 @@ export default function(ctx) {
     currentMode.mousedown(event);
   };
 
-  events.mouseup = function(event) {
+  events.mouseup = function (event) {
+    let crosshairEnabled = isCrosshairEnabled(ctx);
+    let crosshairClick = isCrosshairClick(ctx, event);
+    if (crosshairEnabled && crosshairClick) {
+      const center = getCrosshairCenter(ctx);
+      event = eventOverrideCenter(center, event);
+    }
+
     const target = getFeaturesAndSetCursor(event, ctx);
     event.featureTarget = target;
 
@@ -67,7 +97,9 @@ export default function(ctx) {
       point: event.point,
       time: new Date().getTime()
     })) {
-      currentMode.click(event);
+      if (!crosshairEnabled || crosshairClick) {
+        currentMode.click(event);
+      }
     } else {
       currentMode.mouseup(event);
     }
@@ -80,6 +112,11 @@ export default function(ctx) {
   events.touchstart = function(event) {
     if (!ctx.options.touchEnabled) {
       return;
+    }
+
+    if (isCrosshairEnabled(ctx) && isCrosshairClick(ctx, event)) {
+      const center = getCrosshairCenter(ctx);
+      event = eventOverrideCenter(center, event);
     }
 
     touchStartInfo = {
@@ -116,6 +153,13 @@ export default function(ctx) {
       return;
     }
 
+    let crosshairEnabled = isCrosshairEnabled(ctx);
+    let crosshairClick = isCrosshairClick(ctx, event);
+    if (crosshairEnabled && crosshairClick) {
+      const center = getCrosshairCenter(ctx);
+      event = eventOverrideCenter(center, event);
+    }
+
     const target = featuresAt.touch(event, null, ctx)[0];
 
     // If there are no mapbox targets nearby, let the event propagate through
@@ -130,11 +174,23 @@ export default function(ctx) {
       time: new Date().getTime(),
       point: event.point
     })) {
-      currentMode.tap(event);
+      if (!crosshairEnabled || crosshairClick) {
+        currentMode.tap(event);
+      }
     } else {
       currentMode.touchend(event);
     }
   };
+
+  events.move = function(mapEvent) {
+    if (isCrosshairEnabled(ctx)) {
+      const center = getCrosshairCenter(ctx);
+      const event = eventOverrideCenter(center, mapEvent, true);
+      const target = getFeaturesAndSetCursor(event, ctx);
+      event.featureTarget = target;
+      currentMode.mousemove(event);
+    }
+  }
 
   // 8 - Backspace
   // 46 - Delete
@@ -242,6 +298,8 @@ export default function(ctx) {
       ctx.map.on('touchstart', events.touchstart);
       ctx.map.on('touchend', events.touchend);
 
+      ctx.map.on('move', events.move);
+
       ctx.container.addEventListener('mouseout', events.mouseout);
 
       if (ctx.options.keybindings) {
@@ -258,6 +316,8 @@ export default function(ctx) {
       ctx.map.off('touchmove', events.touchmove);
       ctx.map.off('touchstart', events.touchstart);
       ctx.map.off('touchend', events.touchend);
+
+      ctx.map.off('move', events.move);
 
       ctx.container.removeEventListener('mouseout', events.mouseout);
 
